@@ -63,7 +63,7 @@ char input_char;
 //massage types - tx
 uint8_t commandType;
 //massage types - rx
-uint8_t replyTypel;
+uint8_t replyType;
 uint16_t numStations; //welcome
 uint32_t multicastGroup; //welcome
 uint16_t portNumber_UDP; //welcome
@@ -76,7 +76,7 @@ uint16_t portNumber_Pro_TCP; //welcome
 uint8_t ack_on_what; //welcome & announce
 uint8_t replayStringSize; //welcome & announce
 char replyString[buffer_size]; //announce
-
+int err = 0; //error mssg
 
 //--Help functions
 //this function sends a requested massage to the socket mentioned
@@ -123,33 +123,97 @@ int send_msg(int socket,int mssg, uint8_t commandType, uint16_t station, uint8_t
 void decode_ctrl_massage(int mssg)
 {
     //todo add mutex for buff_rx?
+    //todo check
     //switch cases
+
+    err = 0;
+
     switch(mssg)
     {
         case Welcome:
-            buff_tx[0] = commandType;
-            buff_tx[1] = 0;
-            buff_tx[2] = 0;
+            replyType = buff_rx[0];
+            uint8_t numStations_1 = buff_rx[1];
+            uint8_t numStations_2 = buff_rx[2];
+            uint8_t multicastGroup_1 = buff_rx[3];
+            uint8_t multicastGroup_2 = buff_rx[4];
+            uint8_t multicastGroup_3 = buff_rx[5];
+            uint8_t multicastGroup_4 = buff_rx[6];
+            uint8_t portNumber_UDP_1 = buff_rx[7];
+            uint8_t portNumber_UDP_2 = buff_rx[8];
+            row = buff_rx[9];
+            col = buff_rx[10];
+
+            // fix fields
+            numStations = ((uint16_t)numStations_2 << 8) | (uint16_t)numStations_1;  // Combines 2 uint8_t into 1 uint16_t
+            multicastGroup = ((uint32_t)multicastGroup_4 << 24) | ((uint32_t)multicastGroup_3 << 16) | ((uint32_t)multicastGroup_2 << 8) | ((uint32_t)multicastGroup_1);
+            portNumber_UDP = ((uint16_t)portNumber_UDP_2 << 8) | (uint16_t)portNumber_UDP_1;
+
+            // check for errors
+            if(!replyType){err = 1;}				// Check Type of message
+            if(numStations < 0 ){err = 1;} 		// Check # of statios is logical value
+            if(multicastGroup < 0 ){err = 1;} 	// Check Multicast group is logical value
+            if(portNumber_UDP < 0 ){err = 1;} 	// Check port # is logical value
+            if(row <= 0 || col <= 0){err=1;}
+            if(err){//Disconnect todo
+            }
             break;
-        case AskFilm:
-            buff_tx[0] = commandType;
+
+        case Announce:
+            replyType = buff_rx[0];
+            row = buff_rx[1];
+            col = buff_rx[2];
+            filmNameSize = buff_rx[3];
+            for(int i=0; i<filmNameSize; i++)
+            {
+                filmName[i] = buff_rx[4+i];
+            }
+
+            // check for errors
+            if(replyType != 1){err=1;}
+            if(row <= 0 || col <= 0){err=1;}
+            if(err){//Disconnect todo
+            }
             break;
-        case GoPro:
-            buff_tx[0] = commandType;
-            buff_tx[1] = 0;
-            buff_tx[2] = 0;
+
+        case PermitPro:
+            replyType = buff_rx[0] ;
+            permit = buff_rx[1];
+            uint8_t portNumber_Pro_TCP_1 = buff_rx[2];
+            uint8_t portNumber_Pro_TCP_2 = buff_rx[3];
+            portNumber_Pro_TCP = ((uint16_t)numStations_2 << 8) | (uint16_t)numStations_1;
+
+            // check for errors
+            if(replyType != 2){err=1;}
+            if(portNumber_Pro_TCP < 0 ){err = 1;}
+            if(permit != 0 || permit != 1 ){err = 1;}
+            if(err){//Disconnect todo
+            }
             break;
-        case SpeedUp:
-            buff_tx[0] = commandType;
-            buff_tx[2] = 0;
+
+        case Ack:
+            replyType =buff_rx[0];
+            ack_on_what = buff_rx[1];
+
+            // check for errors
+
+            if(replyType != 3){err=1;}
+            if( ack_on_what < 0 || ack_on_what > 4 ){err = 1;}
+            if(err){//Disconnect todo
+            }
             break;
-        case Release:
-            buff_tx[0] = commandType;
-            buff_tx[1] = 0;
-            buff_tx[2] = 0;
+
+        case InvalidCommand:
+            replyType = buff_rx[0] ;
+            replayStringSize = buff_rx[1];
+            for(int i=0; i<replayStringSize; i++)
+            {
+                replyString[i] = buff_rx[1+i];
+            }
             break;
     }
 }
+
+
 //screen preinter
 //menu show and react
 
@@ -163,7 +227,6 @@ void decode_ctrl_massage(int mssg)
 //request from client: releasePRO
 
 //--MAIN Help functions
-
 // Movie streaming thread function
 void *movie_streamer_thread_function(void *v) {
     printf("hi ilannn movie_streamer_thread_function\n");
@@ -186,6 +249,9 @@ void *movie_streamer_thread_function(void *v) {
             //read_from_socket = recvfrom ( myUDPsocket , buff_rx_movie , buffer_size , 0 , (struct sockaddr *) &sock_struct , &s);
             //todo bug - print data to screen
             present_film = OFF;
+            //get message
+            // built screen
+            // start streaming user
         }
         if(connect_to_a_new_film==ON){
             printf("connecting to a new film\n"); //todo debug
@@ -214,12 +280,6 @@ void *movie_streamer_thread_function(void *v) {
         }
     }//end
 
-    //open a UDP socket
-    //set socket properties
-    //connect to the multicast group
-    //get message
-    // built screen
-    // start streaming user
     //input option - ENTER key
 }
 
@@ -233,7 +293,7 @@ void *server_control_thread_function(void *v) {
     int read_from_socket; //mark how much we read from the socket
     // Timeout and select definitions
     struct timeval timeout;
-    timeout.tv_sec = timeout_time;
+    timeout.tv_sec = timeout_time;// fixme - its now 0
     timeout.tv_usec = 0;
     fd_set sock_set;
     int select_output;
@@ -268,6 +328,8 @@ void *server_control_thread_function(void *v) {
     if(read_from_socket<0){printf("Err in 'recv' function (Welcome).\n");return 0;}// err massage
     decode_ctrl_massage(Welcome);//todo
 
+    //todo print the message received
+
     // get first film - mutex
     if(!mutex_io_film){
         mutex_io_film = 1;
@@ -275,21 +337,27 @@ void *server_control_thread_function(void *v) {
         mutex_io_film = 0;
     }
 
+    while(1) {
+        //-- Menu -
+        scanf("%c", &input_char);
 
-    //-- Menu
-    scanf("%c",&input_char);
+        //react to user choice -> send to help functions
 
-    printf("MENU\n");
-    printf("---%c---\n", input_char);
+        //option to press "Enter" and open menu
+        //give the user options
+        //get response -> act accordingly --- switch
+        //get response for the propriate request
+        //go back to //option to press "Enter" and open menu
 
-    //react to user choise -> send to help functions
+        //todo print the message received
 
-    //option to press "Enter" and open menu
-    //give the user options
-    //get response -> act accordingly --- switch
-    //get response for the propriate request
-    //go back to //option to press "Enter" and open menu
+        // todo if the server closed the tcp socket -> exit
+        // if quit -> close connection & print mssg & release all & close sockets
 
+        printf("MENU\n");
+        printf("---%c---\n", input_char);
+        present_film=ON;
+    }
 
 }
 
