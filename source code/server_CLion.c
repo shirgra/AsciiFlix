@@ -21,8 +21,7 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <fcntl.h> //read files
-
-
+#include <ifaddrs.h>
 
 //--Defines:
 #define client_max_size 50
@@ -31,14 +30,12 @@
 #define buffer_size 1024
 
 //--Global variables
+int quit=0;//for when the user wants to quit
 /* Array of clients tracker = size clients_max_size
- * 0 = no client ,default at restart
- * 1 = client has tried to establish a new connection
- * 2 = client is connected and online
- * -1 = client ERR
+ * -3 = no client ,default at restart
  * -2 = no client - mark that this cell is not the active ending of the clients list
-*/
-int client_tracker[client_max_size] = {0};
+ * any positive int = client is connected and online*/
+int client_tracker[client_max_size];
 int pro_client_tracker[client_pro_size] = {0};
 int mutex_clients = 0; //mutex lock access to the arrays: 0 = available, 1 = taken by another thread
 //Movies
@@ -52,11 +49,23 @@ int port_no_tcp_pro; //port number of the pro TCP
 int port_no_udp; //port number of the broadcasting the movies
 in_addr_t mc_addr;//multicast addr
 
-//--Help functions
+//--Side Help functions
+//fixme!
+//int get_IP(void){//return the user IP address
+//    struct ifaddrs *id;
+//    int val;
+//    val = getifaddrs(&id);
+//    printf("Network Interface Name :- %s\n",id->ifa_name);
+//    printf("Network Address of %s :- %d\n",id->ifa_name,id->ifa_addr);
+//    printf("Network Data :- %d \n",id->ifa_data);
+//    printf("Socket Data : -%c\n",id->ifa_addr->sa_data);
+//    return id->ifa_addr;
+//}
+
+//--MAIN Help functions
 //transmit new frame in Transmitting movies section
 void *movie_streamer_thread_function(void *v)
 {
-    printf("----------movie_streamer_thread_function\n");//todo
     //variables declarations
     int movie_sockets[no_files];//keep UDPs fd numbers
     int myUDPsocket;//temp keeper to fill in the array movie_sockets
@@ -76,54 +85,32 @@ void *movie_streamer_thread_function(void *v)
         //multicast definitions
         setsockopt( myUDPsocket , IPPROTO_IP , IP_MULTICAST_TTL ,&ttl , sizeof(ttl));
         //append to the array movie_sockets
-        //todo add err
+        //todo add err case
         movie_sockets[i] = myUDPsocket;
     }
 
-
     // Infinite loop:
     while(0)
     {
         int i=0;
     }
-
 
     //todo stream:
-    //while 1
-//    printf("in movie streamer\n");
-//    for(int i=0;i<no_files;i++){
-//        printf("%s\n",files_name[i]);
-//    }
     //use the select function to know which movie to switch frame
+
+    //send a massage:
+    //write to socket
+    //int write_to_socket; char buf[buffer_size];//buffer for data;
+    //write_to_socket = sendto( myUDPsocket , buf , buffer_size , 0 , (struct sockaddr *) &sock_struct , sizeof(sock_struct)) ;
+
     return NULL;
-}
-
-void *new_client_thread_function(void *v){
-    printf("----------new_client_thread_function\n");
-
-    //--Open a Welcome socket (TCP control with clients)
-    //welcome socket already open todo notice
-
-    //todo while 1
-    //while(1)
-    // Infinite loop:
-    while(0)
-    {
-        int i=0;
-    }
-
-    //listening
-
-    //new client - open a new thread
-    //--if a new client came -> open a new child process for client communication
-
-
-    //--if a new client came -> father process go back to listen
-
 }
 
 void *active_client_thread_function(void *v){
     printf("-----------in active_client_thread_function");
+    //write to socket
+    // write_to_socket = send( a , buf , buffer_size , 0 );
+
     //receive hello
     //send welcome (hello response)
     //establish a connection ++ Timeout
@@ -131,9 +118,64 @@ void *active_client_thread_function(void *v){
 
 }
 
+void *listen_to_clients_thread_function(void *v){
+    //thread reletad variables declarations
+    pthread_t thread_id_new_client;
+    int flag;//flags that a new cell has been fount in the new clients array
+    //socket related variables declarations
+    int b,l,c,i;//temp holders
+    int welcomeTCPsocket;
+    int newClient_TCPsocket;
+    struct sockaddr_in welcome_sock_struct;//creat sockaddr struct:
+    struct sockaddr_in client_sock_struct;//socket for client
+    int myIP;//todo check!
+    //assign fix vars
+    c = sizeof(struct sockaddr_in);
+    //fixme myIP = get_IP();//get my IP address as string
+
+    //--Open a Welcome socket (TCP control with clients)
+    /*SOCKET PROCESS*/
+    //open a TCP socket
+    welcomeTCPsocket = socket(AF_INET , SOCK_STREAM , 0);
+    //set vars to sock struct - srv:
+    welcome_sock_struct.sin_family = AF_INET ;
+    welcome_sock_struct.sin_port = htons(port_no_tcp_ctrl) ;
+    welcome_sock_struct.sin_addr.s_addr = inet_addr("192.10.1.1");//fixme
+    //bind socket
+    b = bind( welcomeTCPsocket , (struct sockaddr *) &welcome_sock_struct, sizeof(welcome_sock_struct));
+    //todo b check for err
+
+    //-------->> Infinite loop:
+    while(!quit){
+        //wait for a connection - listen
+        l = listen(welcomeTCPsocket, SOMAXCONN);
+        if(!l){//listening...
+            printf("Listening...\n");
+            //STOPS UNTIL A NEW CLIENT -->> accept connection from an incoming client
+            newClient_TCPsocket = accept(welcomeTCPsocket, (struct sockaddr *)&client_sock_struct, (socklen_t*)&c);
+            //todo add check err
+            printf("A new client has joined AsciiFlix! Yey!\n");
+            //attach new client to a new thread
+            while(!mutex_clients){mutex_clients=1;}//mutex for touching the clients
+            flag=0;
+            for(i=0;i<client_max_size;i++){
+                if((client_tracker[i]==-3)&&(!flag)){
+                    client_tracker[i]=newClient_TCPsocket;
+                    flag=1;
+                }//todo check if we need to pass more arguments to the next thread--client_sock_struct??
+            }
+            mutex_clients=0;
+            //--Open a new thread: active_client_thread
+            pthread_create(&thread_id_new_client, NULL, active_client_thread_function, NULL);
+        }
+        else{ printf("ERR\n");} //todo err
+    }
+}
+
 ////~////~//// MAIN ////~////~////
 int main(int argc, char** argv) {
     //~ First activation:
+    for(int i=0; i<client_max_size; i++){client_tracker[i]= -3;}
 
     //--declare main variables
     //Decode to variables input from command line
@@ -145,7 +187,7 @@ int main(int argc, char** argv) {
     no_files = argc-5; //number of files to screen
     for(int i=0; i<no_files;i++){files_name[i] = argv[5+i];} //input files names in name array
     //Threads variables
-    pthread_t thread_id_movie_streamer, thread_id_new_client; //create thread variable todo check second purpose
+    pthread_t thread_id_movie_streamer, thread_id_welcome_socket; //create thread variable
     //prep work for thread- open files to read
     int fd;
     for(int i=0; i<no_files;i++){
@@ -173,15 +215,23 @@ int main(int argc, char** argv) {
 
     //-------------------------------------------------------------------
     //--Open a new thread: listening for new clients
-    pthread_create(&thread_id_new_client, NULL, new_client_thread_function, NULL);
+    pthread_create(&thread_id_welcome_socket, NULL, listen_to_clients_thread_function, NULL);
 
     //User inform
     printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
-    printf("Ready for clients! listening...\n");
+    printf("Ready for clients!\n");
+
+    //todo ad input q for quit
+//    printf("press q to quit at any time.\n");
+//    quit=1;
+//    char chr;
+//    printf("Enter a character: ");
+//    scanf("%c",&chr);
+//    printf("You entered %c.", chr);
 
     //-------------------------------------------------------------------
     pthread_join(thread_id_movie_streamer, NULL);//block until thread is finished - stop bugs
-    pthread_join(thread_id_new_client, NULL);//block until thread is finished - stop bugs
+    pthread_join(thread_id_welcome_socket, NULL);//block until thread is finished - stop bugs
     exit(0);//just in case
 }//end main
 // @ Ilan & Shir.
