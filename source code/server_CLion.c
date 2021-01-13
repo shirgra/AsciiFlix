@@ -108,9 +108,23 @@ int pos = 0;
 
 //side help functions
 
-void timer(int rate) {
-    long time = 1000000000 * rate / 24;
-    nanosleep((const struct timespec[]) {{0, time}}, NULL);
+void timer(long rate) {
+//    long time = 1000000000 * rate / 24;
+//    printf("time to sleep = %ld\n", time);
+//    time = (1000000000 * rate) / 24;
+//    printf("time to sleep = %ld\n", time);
+//    time = (10000000000 * rate) / 24;
+//    time = (1e9 * rate) / 24;
+//    nanosleep((const struct timespec[]) {{0, time}}, NULL);
+    //sleep(1);
+    struct timespec ts;
+
+    int i;
+    ts.tv_sec = 0;
+    ts.tv_nsec = (long)(1e9 * rate / 24);
+    printf("nanosleep start.¥n");
+
+    nanosleep(&ts, NULL);
 }
 
 int check_pro_permit(void) {
@@ -237,6 +251,7 @@ int verify(int socket, int mssg_expected, uint8_t buff[buffer_size]) {
         case AskFilm:
             if ((buff[0] != 0x01) || ((buff[1] == 0x00) && (buff[2] != 0x00))) { err = 1; };
             temp_16b = htons(*(uint16_t *) &buff[1]);
+            printf("AskFilm for station %d", temp_16b);
             if ((int) temp_16b > no_files) { err = 2; }
             break;
         case GoPro:
@@ -254,11 +269,11 @@ int verify(int socket, int mssg_expected, uint8_t buff[buffer_size]) {
             return 1;
         case 1:
             printf("Err. in verification of a message\n");
-            sendInvalid(socket, "Err. in verification of a message.");
+            sendInvalid(socket, "---Connection terminated by the server.\n---Message from server: error in verification of a message.");
             return 0;
         case 2:
             printf("Err. in verification of a message - out of range values.\n");
-            sendInvalid(socket, "Err. in range of values.");
+            sendInvalid(socket, "---Connection terminated by the server.\n---Message from server: error in range of values.");
             return 0;
     }
 }
@@ -267,7 +282,7 @@ void *pro_movie_streamer_thread_function(void *args) {
     struct premium_args *pro_args = (struct premium_args *) args;
     char *endptr;
     char line[256];
-    int rate, r;
+    long rate, r;
     int place = pro_args->movie_id;
     ssize_t write_to_socket;//read from socket
     //get local vars: mutex get client data
@@ -281,33 +296,79 @@ void *pro_movie_streamer_thread_function(void *args) {
     struct sockaddr_in self_sock_struct = movie_sock_struct[place];
     mutex_clients = 0;
     char buf[buffer_size];
+    char buf_rate[2];
 
-    printf("self_id = %d \n", self_fd);
+
+    printf("pro self_id = %d \n", self_fd);
+
+
+    //start film from beginning
+    close(self_fd);
+    self_fd = open(files_name[place], O_RDONLY);
+    if (self_fd == -1) {
+        printf("ERR- can not open %s file\n", files_name[place]);
+        return NULL;
+    }//fixme
 
     while (!quit) {
         //read 1 line
-        if (fgets(line, sizeof(line), (FILE *) self_fd)) {
-            //read row lines from file
-            line[strlen(line) - 1] = 0;//delete end
-            rate = strtol(line, &endptr, 10);//set rate
-            rate = rate * (0.01 * (pro_args->speedup) + 1);
+        if (read(self_fd, buf_rate, 2) != -1) {
+            printf("buf_rate: %s \n", buf_rate);
+            if (buf_rate[1] == '\n') {
+                //read row lines from file
+                buf_rate[1] = 0;//delete end
+                rate = strtol(buf_rate, &endptr, 10);//set rate
+                rate = rate * (0.01 * (pro_args->speedup) + 1);
+                printf("rate: %ld \n", rate);
+            } else {
+                rate = strtol(buf_rate, &endptr, 10);//set rate
+                read(self_fd, buf_rate, 1);
+                printf("rate: %ld \n", rate);
+            }
             //read file.txt into buffer
-            r = read(self_fd, buf, self_row * self_col);
+//            r = read(self_fd, buf, self_row * self_col);
+//            printf("buf after read[self_col*self_row]:\n %s \n", buf);
+            //fix
+            int ptr_buf = 0;
+            char cr[1];
+            int flag_EOL, i, j;
+            //build buf
+            for (i = 0; i < self_row; i++) {
+                flag_EOL = 0;
+                for (j = 0; j < self_col; j++) {
+                    if (!flag_EOL) {
+                        read(self_fd, cr, 1);
+                        if (i == 0 && cr[0] == '\n') {
+                            flag_EOL = 1;
+                            buf[ptr_buf] = '\n';
+                        }//handle first char is \n
+                        if (cr[0] == '\n') {
+                            flag_EOL = 1;
+                            buf[ptr_buf] = '\n';
+                        }//end of line
+                        if (!flag_EOL) { buf[ptr_buf] = cr[0]; }//line itself
+                        ptr_buf = ptr_buf + 1;
+//                    printf("%c", cr[0]);
+                    }
+                }
+            }
+//            printf("\n\n\n-----buf after read[self_col*self_row]:\n %s -------------------------\n", buf);
+
             //write to socket
             write_to_socket = send(pro_args->socket_info, buf, buffer_size, 0);
 
             //timer - sleep
             timer(rate);
-
         } else {
             close(self_fd);
             self_fd = open(files_name[place], O_RDONLY);
             if (self_fd == -1) {
                 printf("ERR- can not open %s file\n", files_name[place]);
                 return NULL;
-            }//fixme
+            }
         }
     }
+    printf("quit in pro_movie_streamer_thread_function\n");
     return NULL;
 }
 
@@ -448,7 +509,7 @@ void *send_film_thread_function(void *arg) {
     char line[256];
     char buf_rate[2];
     int header = ON;
-    int rate;
+    long rate;
     ssize_t write_to_socket;//read from socket
     //get local vars: mutex get client data
     if (mutex_clients) { while (mutex_clients) { ; }; }
@@ -463,26 +524,55 @@ void *send_film_thread_function(void *arg) {
            movie_sockets[i]);
     struct sockaddr_in self_sock_struct = movie_sock_struct[i];
     mutex_clients = 0;
-    char buf[buffer_size];
-
+    char buf[self_col*self_row];
+    printf("buf[self_col*self_row] before:\n %s \n", buf);
     printf("self_id = %d \n", self_fd);
-
     while (!quit) {
         //read 1 line
         if (read(self_fd, buf_rate, 2)!=-1) {
+            printf("buf_rate: %s \n", buf_rate);
             if(buf_rate[1]=='\n'){
                 //read row lines from file
                 buf_rate[1] = 0;//delete end
                 rate = strtol(buf_rate, &endptr, 10);//set rate
+                printf("rate: %ld \n", rate);
             }
             else{
                 rate = strtol(buf_rate, &endptr, 10);//set rate
                 read(self_fd, buf_rate, 1);
+                printf("rate: %ld \n", rate);
             }
             //read file.txt into buffer
-            r = read(self_fd, buf, self_row * self_col);
+//            r = read(self_fd, buf, self_row * self_col);
+//            printf("buf after read[self_col*self_row]:\n %s \n", buf);
+            //fix
+            int ptr_buf = 0;
+            char cr[1];
+            int flag_EOL, j;
+            //build buf
+            for(i=0;i<self_row-1;i++){
+                flag_EOL = 0;
+                for(j=0;j<self_col;j++){
+                    if(!flag_EOL) {
+                        read(self_fd, cr, 1);
+                        if (i == 0 && cr[0] == '\n') {
+                            flag_EOL = 1;
+                            buf[ptr_buf] = '\n';
+                        }//handle first char is \n
+                        if (cr[0] == '\n') {
+                            flag_EOL = 1;
+                            buf[ptr_buf] = '\n';
+                        }//end of line
+                        if (!flag_EOL) { buf[ptr_buf] = cr[0]; }//line itself
+                        ptr_buf = ptr_buf + 1;
+//                    printf("%c", cr[0]);
+                    }
+                }
+            }
+//            printf("\n\n\n-----buf after read[self_col*self_row]:\n %s -------------------------\n", buf);
+
             //write to socket
-            write_to_socket = sendto(self_sock, buf, buffer_size, 0, (struct sockaddr *) &self_sock_struct,
+            write_to_socket = sendto(self_sock, buf, self_col*self_row, 0, (struct sockaddr *) &self_sock_struct,
                                      sizeof(self_sock_struct));
             //timer - sleep
             timer(rate);
