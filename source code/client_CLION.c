@@ -99,8 +99,8 @@ int send_msg(int socket, int mssg, uint8_t commandType, uint16_t station, uint8_
             break;
         case AskFilm:
             buff_tx[0] = commandType;
-            buff_tx[1] = station & 0xff;
-            buff_tx[2] = (station >> 8);
+            buff_tx[1] = (station >> 8);
+            buff_tx[2] = station & 0xff;
             printf("L 100 this is sending station: %x - %x\n", buff_tx[1], buff_tx[2]);
             //todo check station
             break;
@@ -356,6 +356,9 @@ void *movie_streamer_thread_function(void *v) {
     int flag_mc_first_reg = 0;
     int flag_first_frame_printout = 0;
     int i, j; //temp holder
+    int ptr_buf;
+    char cr;
+    int flag_EOL;
 
     //infinite loop - if we are requested to ask film
     while (!quit) {
@@ -371,7 +374,24 @@ void *movie_streamer_thread_function(void *v) {
                         for (i = 0; i < row; i++) { printf("\033[1A\033[2K\r"); }
                     }//delete a rows and move the 'cursor' up
                     //print frame
-                    for (i = 0; i < row; i++) { for (j = 0; j < col; j++) { printf("%c", buff_rx_movie[i * col + j]); }}
+                    // work with target for (i = 0; i < row; i++) { for (j = 0; j < col; j++) { printf("%c", buff_rx_movie[i * col + j]); }}
+                    //build buf
+                    ptr_buf=0;
+                    for(i=0;i<row;i++){
+                        flag_EOL = 0;
+                        for(j=0;j<col;j++){
+                            if(!flag_EOL) {
+                                cr = buff_rx_movie[ptr_buf];
+                                if (cr == '\n') {
+                                    flag_EOL = 1;
+                                    printf("%c", buff_rx_movie[ptr_buf]);
+                                }//end of line
+                                if (!flag_EOL) { printf("%c", buff_rx_movie[ptr_buf]);}//line itself
+                                ptr_buf = ptr_buf + 1;
+                            }
+                        }
+                    }
+
                     flag_first_frame_printout = 1;
                 }
             }//end present_through_UDP
@@ -384,7 +404,24 @@ void *movie_streamer_thread_function(void *v) {
                         for (i = 0; i < row; i++) { printf("\033[1A\033[2K\r"); }
                     }//delete a rows and move the 'cursor' up
                     //print frame
-                    for (i = 0; i < row; i++) { for (j = 0; j < col; j++) { printf("%c", buff_rx_movie[i * col + j]); }}
+                    // work with target for (i = 0; i < row; i++) { for (j = 0; j < col; j++) { printf("%c", buff_rx_movie[i * col + j]); }}
+                    //todo fixme
+                    //build buf
+                    ptr_buf=0;
+                    for(i=0;i<row;i++){
+                        flag_EOL = 0;
+                        for(j=0;j<col;j++){
+                            if(!flag_EOL) {
+                                cr = buff_rx_movie[ptr_buf];
+                                if (cr == '\n') {
+                                    flag_EOL = 1;
+                                    printf("%c", buff_rx_movie[ptr_buf]);
+                                }//end of line
+                                if (!flag_EOL) { printf("%c", buff_rx_movie[ptr_buf]);}//line itself
+                                ptr_buf = ptr_buf + 1;
+                            }
+                        }
+                    }
                     flag_first_frame_printout = 1;
                 }
             }//end present_through_TCP
